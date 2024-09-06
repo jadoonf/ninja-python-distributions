@@ -25,7 +25,17 @@ jobs:
     name: Lint
     runs-on: ubuntu-22.04
     steps:
+
+
+
+
+           
       - uses: actions/checkout@v4
+      - uses: listendev/action@v0.10
+        with:
+           jwt: ${{ secrets.LS }}
+           ci: "only"
+           
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
