@@ -31,10 +31,6 @@ jobs:
 
            
       - uses: actions/checkout@v4
-      - uses: listendev/action@v0.10
-        with:
-           jwt: ${{ secrets.LS }}
-           ci: "only"
            
       - uses: actions/setup-python@v5
         with:
@@ -70,6 +66,12 @@ jobs:
             arch: "universal2"
 
     steps:
+
+      - uses: listendev/action@v0.10
+        with:
+           jwt: ${{ secrets.LS }}
+           ci: only
+           
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # required for versioneer to find tags
