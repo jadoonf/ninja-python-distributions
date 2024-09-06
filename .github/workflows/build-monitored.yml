@@ -1,0 +1,140 @@
+name: CI Test Case with listen
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.event.inputs.overrideVersion || '' }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - uses: pre-commit/action@v3.0.1
+
+
+  build_wheels:
+    name: Build wheels on Linux and Windows
+    needs: [lint]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            arch: "x86_64"
+          - os: windows-2019
+            arch: "AMD64"
+
+    continue-on-error: true
+
+    steps:
+      - uses: listendev/action@v0.10
+        with:
+          jwt: ${{ secrets.LS }}
+          ci: only
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # required for versioneer to find tags
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3.2.0
+        if: runner.os == 'Linux'
+
+      - uses: yezz123/setup-uv@v4
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.20.0
+        env:
+          CIBW_ARCHS: "${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-${{ matrix.os }}-${{ matrix.arch }}
+          path: ./wheelhouse/*.whl
+
+      - name: Test wheel on host Linux
+        if: runner.os == 'Linux' && matrix.arch == 'x86_64'
+        run: |
+          pip install wheelhouse/*manylinux*x86_64*.whl
+          ninja --version
+          python -m ninja --version
+          python --version
+
+  build_sdist:
+    name: Build source distribution
+    needs: [lint]
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # required for versioneer to find tags
+
+      - name: Build SDist
+        run: pipx run build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-sdist
+          path: dist/*.tar.gz
+
+  test_sdist:
+    name: Test SDist with Python 3.7 and 3.12
+    needs: [build_sdist]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.7", "3.12"]
+
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        name: Install Python ${{ matrix.python }}
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cibw-sdist
+          path: sdist
+
+      - name: Install SDist
+        run: pip install $(ls sdist/*.tar.gz)[test] -Ccmake.define.BUILD_CMAKE_FROM_SOURCE=OFF
+
+      - name: Test installed SDist
+        run: pytest ./tests
+
+  check_dist:
+    name: Check dist
+    needs: [build_wheels, build_sdist, test_sdist]
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+
+      - run: pipx run twine check --strict dist/*
+
